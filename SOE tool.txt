@@ -1,0 +1,5 @@
+How to deploy soe tool into your enterprise
+
+
+Go to Server Manager, Site, Extensions, and Add Extension. 
+

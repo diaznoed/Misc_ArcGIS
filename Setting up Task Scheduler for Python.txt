@@ -1,0 +1,7 @@
+Need Service Account, username and password
+
+Program: "C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3-clone\python.exe"
+
+Argument: "F:\Support\Tools\3. Portal Metrics Usage\10-8-1\06-script\Prod\portal_usage_metrics.py"
+
+Start in: F:\Support\Tools\3. Portal Metrics Usage\10-8-1\06-script\Prod
