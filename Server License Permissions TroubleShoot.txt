@@ -1,0 +1,32 @@
+If the Server isnt connecting to the Portal such as validating the federated Servers, or Server Manager isnt validating the Data Stores. Data isnt populating, etc..
+
+*Warning this could require restarting the Service or Downloading ECP Server License*
+
+A few troubleshoot options
+
+1. Go to ArcPro and Try to Publish (It will probably say, Error: ArcGIS Server not License)
+2. Check the License in Server Manager in Software Authorization (Probably not present or expired)
+3. Open the Server License (Usually located in the F:\AGSDeploy\) with Notepad and check the expiration date. (If its expired, then we need a new one)
+4. Get a ECP license if possible for ArcGIS Server and check the expiration date (move it to the F drive). 
+5. Double click the new license and add the license to your portal.
+6. Go to Server Admin (https://s1cfagissvr02.dosdev.local:6443/arcgis/admin/login) --> Home > data > items > enterpriseDatabases > AGSDataStore_ds_q5k6gy91 > machines > S1CFAGISADS02.DOSDEV.LOCAL > Validate
+*Additionally you could validate through server manager and open browser developer tools > network > to see if the connection is validating*
+7. Verify the Database is healthy and accepting connections 
+8. Next, Go to Data Store Server and verify datastore is healthy through the command
+*PS C:\Windows\system32> f:*
+*PS F:\> cd F:\ArcGIS\DataStore\tools*
+*PS F:\ArcGIS\DataStore\tools> .\describedatastore.bat*
+9. Next, update the license for DataStore --> Run the upadatelicense tool (this tool applies to 10.9 and below)
+10. *PS F:\ArcGIS\DataStore\tools> .\updatelicense.bat*
+11. Done! Go Back to Portal and verify you can federate and validate datastores
+
+These are also some checks you need to do as well (I found that a ton of our license extensions were never read in server manager because the service account didnt have permission)
+
+1. Check the permissions in ArcGIS Folder in the F Drive of the Server (F:\ArcGIS or Check C:\Program Files\ESRI).
+2. Right Click the ArcGIS folder --> Properties --> Security --> Verify Service Account (Or add it)
+3. Even if Service Account is present, you will want reset those permissions again
+4. Click Advanced --> Select the Service Account --> Click Change Permissions --> Select the Service Account (Again)
+5. Select the Box "Replace All Child Object Permission Entries from this Object" --> Select Apply
+6. Wait a few minutes to let finish --> Click ok and leave the dialog window. 
+7. Restart the Service Account in the Services
+
