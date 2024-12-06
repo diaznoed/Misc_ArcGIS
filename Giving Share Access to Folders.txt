@@ -1,0 +1,10 @@
+Need to make sure service accounts have access to the properties and backup folder 
+
+Right click the folders ("F:\Support\BackupProp" or "F:\ArcGIS\GeoBackup")
+
+Select Properties --> Click Sharing --> Click Share --> Input the service account and add to the network access
+
+Click Share at the bottom right to create a network path "\\localhost\GeoBackup".
+
+Click Advanced Backup --> Make sure "Share this folder is checked" and Share name is "GeoBackup" --> Click OK
+
