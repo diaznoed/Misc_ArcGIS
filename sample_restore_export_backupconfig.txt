@@ -1,0 +1,22 @@
+#PS F:\ArcGIS\Portal\tools\webgisdr .\webgisdr.bat --import --file "F:\GeoBackup\egisfull.properties"
+#PS F:\ArcGIS\Portal\tools\webgisdr .\webgisdr.bat --export --file "F:\ArcGIS\GeoBackup\egisfull.properties"
+
+####################
+## Portal properties
+####################
+
+PORTAL_ADMIN_URL = https://portalmachine.domain:7443/arcgis
+PORTAL_ADMIN_USERNAME = PortalUserName
+PORTAL_ADMIN_PASSWORD = iTdaCLoupArSjMecdZKWCg==
+PORTAL_ADMIN_PASSWORD_ENCRYPTED = true
+BACKUP_RESTORE_MODE = full
+SHARED_LOCATION = \\\\portalmachine.domain\\GeoBackup
+INCLUDE_SCENE_TILE_CACHES = false
+
+############################
+## Web GIS backup properties
+############################
+
+TOKEN_EXPIRATION_MINUTES = 1440
+BACKUP_STORE_PROVIDER = FileSystem
+BACKUP_LOCATION = \\\\portalmachine.domain\\GeoBackup
