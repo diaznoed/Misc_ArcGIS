@@ -1,0 +1,323 @@
+﻿<#
+    #                     ######                                     
+   # #   #####   ####     #     #   ##    ####  #    # #    # #####  
+  #   #  #    # #    #    #     #  #  #  #    # #   #  #    # #    # 
+ #     # #    # #         ######  #    # #      ####   #    # #    # 
+ ####### #####  #         #     # ###### #      #  #   #    # #####  
+ #     # #   #  #    #    #     # #    # #    # #   #  #    # #      
+ #     # #    #  ####     ######  #    #  ####  #    #  ####  #   
+
+Backup Script using ArcGIS WEBGISDR tool
+Date: 03 Nov 2024
+
+The scripts invokes the ArcGIS WebGS Disaster Recovery utility scripts to initiate a backup of the federated 
+ArcGIS Enterprise Servers, ArcGIS Server, Portal for ArcGIS, Data Store and Image Server. It may include other
+Servers in the future.
+Primary use for PowerShell is the easy invocation of sending email.
+
+Ver 0.5 - adds commands to include details of job results in body of SMTP message because O365 doesnt 
+          DRM text files, thanks COVID19.
+Ver 0.6 - combines Incremental and Full backup into one script, 
+          utilizing GetDate.DayOfWeek to determine full or incremental.
+Ver 0.7 - uses Out-File to redirect webgisdr.bat output instead of >> so that attached file is readable.
+Ver 0.8 - added -Raw to Get-Content so that carriage returns are respected in body of message, 
+          changed Script to Task in subject, removed attachment since body now readable. bjs
+Ver 0.9 - Formatting issues, size of backup in email.
+Ver 0.99- change full backup to Sunday to that I can come in Sat (1/15/22) and move backup target to file share.
+
+Ver 1.0 - final move to file share, set full backup back to Sat and tweak svcAcnt perms on share so that temp backup file can be deleted.
+Ver 1.09- added FullBackDoW variable and variable SMTP subject lines. (Backups skipped because of pwd change, var makes it easier to change.)
+Ver 1.1 - added Mehta to SMTP list.
+Ver 1.11- changed full backup day of week back to Sat.
+Ver 1.2 - Appended WebGISDR log to daily backup log file (after sending email).
+Ver 1.3 - Added Get Disk Space function to script.
+Ver 1.4 - Changed read mail recipient from text file into array, collab with Jamie.
+Ver 1.5 - Added PSLog function and a few breakpoints, also test why script worked for full backup but sent no email.
+Ver 1.6 - Testing for WebGISDR Exit code and changing email subject line accordingly.
+Ver 1.65 - Testing network connectivity, WinServ 2012 R2 dropping from net causing backup fail.
+Ver 1.69 - Testing way to extract backup file name from results file, is viable, useful in moving backup consolidation to 
+           local storage for faster performance.
+Ver 1.7 - Moved backup target to local (F:\GeoBackup) for better performance. SMTP setup from XML.
+Ver 1.8 - Changed backup target to share of local drive
+Ver 1.9 - Corrected file path extraction string, added transfer timer.
+Ver 1.91 - Tweaked transfer time output and other cosmetic items.
+Ver 1.92 - Added more vars to read from XML, tested remote file copy before deleting local backup.
+Ver 1.93 - Added time zone string, this ver of PS (2012) does not support Get-TimeZone function.
+Ver 1.94 - Testing PSBar, added scriptVer variable
+
+Ver 2.0 - Migrated to 2019 Server (8 Oct 23) [new path to WebGISDR: F:\ArcGIS\Portal\tools\webgisdr]
+Ver 2.01 - Fixed path to local directory and test for string length of backup file name [localTargetDir=F:\ArcGIS\GeoBackup]
+Ver 2.02 - Configured two day a week full backup (Sat/Wed). Fixed WedGISDir Log file location, set level back to Warn.
+Ver 2.1 - PITR not set in DS, all backups are full, updated strings to say so. Updated mail message body for Get-Date with time zones.
+Ver 2.11 - PITR set 12/31/23, reverting back to Full Wed/Sat, Incremental rest.
+Ver 2.12 - updated Script Ver, minor visual (log file) tweaks.
+Ver 2.2 - added log size cap, updated attachments on bail on error section, misc cosmetic.
+#>
+
+$scriptVer = "GeoState Backup Script v2.2"
+
+##
+## Read shared script configuration info from XML file
+##
+[xml]$ScriptConfig = Get-Content F:\Support\Scripts\GeoStateBackConfig.xml
+$smtpFrom = $ScriptConfig.ScriptConfig.SMTPServer.SMTPFrom
+$smtpSvr = $ScriptConfig.ScriptConfig.SMTPServer.RelayName
+$smtpTo = $ScriptConfig.ScriptConfig.Recipients.Recip
+$fullBackDoW = $ScriptConfig.ScriptConfig.FullBackupDay.BackUpDoW
+$fullBackDoW2 = $ScriptConfig.ScriptConfig.FullBackupDay.BackUpDoW2
+$localBackDir = $ScriptConfig.ScriptConfig.BackDirs.localTargetDir
+$targBackDir = $ScriptConfig.ScriptConfig.BackDirs.RemoteBackupDir
+$resultFile = $ScriptConfig.ScriptConfig.LocalScriptFiles.localResultFile
+$logFileName = $ScriptConfig.ScriptConfig.LocalScriptFiles.locallogFileName
+
+
+function GetDiskSpace
+## Calculate disk space, free disk space, used disk space
+    {
+    $drive=Get-PSDrive -Name Q
+    $driveused = (($drive).used/1GB)
+    $drivefree = (($drive).free/1GB)
+    $driveTotal = ($driveused + $drivefree)
+    Return $drivefree, $driveTotal
+    }
+
+#[timezoneinfo]::Local
+#$tzstr = [regex]::Replace([system.timezoneinfo]::Local.StandardName, '([A-Z}])\w+\s*', '$1')
+$tzStr = (Get-TimeZone).id
+
+function PSLog($tString)
+## PowerShell Log file writing function, automatically adds current date/time to each line
+    {
+    $logTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Write-Output "$logTime $tzStr - $tString" | out-file -Filepath $logFileName -append
+    }
+
+function PSBar
+## Log file end of job for visually seperation in text file
+    {
+        $headDate = Get-Date -Format "yyyy-MM-dd"
+        Write-Output "- - - - - - - - - - - - - - - - - - - - - $headDate - - - - - - - - - - - - - - - - - - - - -" | out-file -Filepath $logFileName -append
+    }
+
+##
+## MAIN
+## Create the log files and run the backup command
+##
+
+$psLogSize = (Get-Item $logFileName).length
+If ($psLogSize -gt 1MB)
+    {
+    PSLog "+ + + + + Renaming PSLog Maintenance file + + + + +"
+    $lfStr = Get-Date -Format "yyyy-MM-dd"
+    Rename-Item -NewName GeoStatePSLog-$lfStr.txt -Path $logFileName
+    PSLog "New Maintenance Log created. Old log file renamed: GeoStatePSLog-$lfStr.txt"
+    }
+
+PSLog "Begin $scriptVer"
+Set-Content -Path $resultFile -Encoding Ascii -Value "GeoState 2019 WebGIS DR Results Log" -Force
+$stTime = = Get-Date -Format "R"
+Add-Content -Path $resultFile -Value $stTime
+
+## Execute Full Backup on full backup days (now two), otherwise do incremental
+$abdow = (Get-Date).DayOfWeek
+if (($abdow -eq $fullBackDoW) -or ($abdow -eq $fullBackDoW2))
+    {
+    Add-Content -Path $resultFile -Value "Begin weekly FULL backup of GeoState Enterprise."
+    $smtpSubject = "GeoState Full Backup Task"
+    PSLog "Calling WebGIS DR utility to beginning weekly FULL backup..."
+    & "F:\ArcGIS\Portal\tools\webgisdr\webgisdr.bat" --export --file "F:\Support\BackupProp\egisfull.properties" | Out-File -FilePath $resultFile -Append -Encoding ascii
+    $drExit = $LASTEXITCODE
+    PSLog "Completing weekly FULL backup..."
+    }
+else
+    {
+    Add-Content -Path $resultFile -Value "Executing Incremental backup of GeoState Enterprise."
+    $smtpSubject = "GeoState Incremental Backup Task"
+    PSLog "Calling WebGIS DR utility to begin Incremental backup..."
+    & "F:\ArcGIS\Portal\tools\webgisdr\webgisdr.bat" --export --file "F:\Support\BackupProp\egisinc.properties" | Out-File -FilePath $resultFile -Append -Encoding ascii
+    $drExit = $LASTEXITCODE
+    PSLog "Completing Incremental backup..."
+    #PSLog "Completing full backup..."
+    }
+
+##
+## Test WebGISDR exit Code
+##
+if ($drExit -ne 0)
+{
+    PSLog "GeoState WebGISDR exit code is $drExit"
+    $smtpSubject = "WebGISDR exited with other than complete code"
+    $npTime = Get-Date -Format "MM-dd-HHmmss"
+    $netTestFile = "F:\Support\Scripts\Logs\PingTest-$npTime.txt"
+    Set-Content -Path $netTestFile -Encoding Unicode -Value "Network Path Test at $npTime"
+    ping portal.domain -4 -l 1250 -n 2 >>$netTestFile
+    ping server.domain -4 -l 1250 -n 2 >>$netTestFile
+    ping datastore.domain -4 -l 1250 -n 2 >>$netTestFile
+    ping webadapt.domain -4 -l 1250 -n 2 >>$netTestFile
+    ping fileshare.domain -4 -l 1250 -n 2 >>$netTestFil
+}
+else
+{
+    PSLog "WebGISDR exit code is $drExit"
+    If (Test-Path $resultFile)
+    {
+        PSLog "Results file found, $resultFile"
+        $wgdrString = Select-String -Path $resultFile -Pattern "The backup file for the current web GIS site is located at"
+        If ($wgdrString | Select-String "webgissite" -Quiet)
+        {
+            PSLog "Backup file string found. $wgdrString"
+            $wgdrBkTemp = ($wgdrString -split "GeoBackup\\",2)[1]
+            $wgdrBkTemplen = $wgdrBkTemp.length
+            $wgdrBkFilelen = $wgdrBkTemplen - 1
+            $wgdrBkFile = $wgdrBkTemp.Substring(0,$wgdrBkFilelen)
+	        PSLog "-+-+- Backup File Created is: $wgdrBkFile +-+-+"
+            $backupFileFlag = $true
+        }
+        else
+        {
+            PSLog "Backup file string NOT found in Results file"
+            $deetsBF = Get-Content -Path $resultFile -Raw
+            $backupFileFlag = $false
+        }
+    }
+    else
+    {
+        PSLog "Could not find Results file $resultFile"
+        $deetsBF = "Could not find Results file $resultFile"
+        $backupFileFlag = $false
+    }
+}
+
+## We cant do anything without a backup file, so here's the break
+
+If ($backupFileFlag)
+{
+    PSLog "Backup File log found flag set to TRUE, proceeding with script."
+}
+else
+{
+    PSLog "Backup File log found flag set to FALSE, bailing on script."
+    $smtpSubjectBF = "GeoState Backup File not found."
+    $endTimeBF = Get-Date
+    $smtpBodyBF = "GeoState Backup script ended on $endTimeBF. Details included.`n`n" + $deetsBF
+    Send-MailMessage -From $smtpFrom -To $smtpTo -Subject $smtpSubjectBF -Body $smtpBodyBF -SmtpServer $smtpSvr -Attachments $netTestFile, $resultFile
+    BREAK
+}
+
+##
+## Create body of email message with command results and other data.
+##
+$endTime = Get-Date -Format "R"
+Add-Content -Path $resultFile -Value $endTime
+
+$wgdrCur = "$localBackDir\$wgdrBkFile"
+$localFSizeGB = (((Get-Item $wgdrCur).length)/1GB)
+Add-Content -Path $resultFile "Backup file name is: $wgdrBkFile" 
+Add-Content -Path $resultFile ("File size is: {0:N3} GBytes." -f $localFSizeGB)
+PSLog ("File size is: {0:N2} GBytes." -f $localFSizeGB)
+
+##
+## Move backup file from local drive to backup file share
+##
+PSLog "Copying backup file ($wgdrBkFile) to $targBackDir"
+$xfrStart = (Get-Date)
+Copy-Item -Path "$localBackDir\$wgdrBkFile " -Destination $targBackDir
+$xfrFinish = (Get-Date)
+PSLog "End copying backup file."
+
+##
+## Double check backup and safe copy and for 0 byte files
+##
+Start-Sleep 10
+
+$wgdrRmt = "$targBackDir\$wgdrBkFile"
+$remotefSizeGB = (((Get-Item $wgdrRmt).length)/1GB)
+
+If ((Test-Path ("$targBackDir\$wgdrBkFile")) -and ($localFSizeGB -eq $remotefSizeGB))
+    {
+    PSLog "GeoState Site Backup file successfully copied to remote server."
+    $RemoveLocalBackupFile = $true
+    }
+    Else
+    {
+    PSLog "* * * * REMOTE DATA BACKUP FILE NOT THE SAME AS LOCAL FILE, PLEASE CHECK BACKUPS * * * *"
+    $smtpSubject = "WARNING: " + $smtpSubject
+    $RemoveLocalBackupFile = $false
+    }
+
+$xfrInterval = ($xfrFinish - $xfrStart)
+$xfrSecs = $xfrInterval.TotalSeconds
+$remoteFSize = ((Get-Item $wgdrRmt).length)
+$itemLength = $remotefSize/1MB 
+$TransferRate = $itemLength / $xfrSecs 
+$xfrString = ("Tranfer Rate to file share: {0:n3} MB/sec" -f $TransferRate)
+PSLog $xfrString
+PSLog "Local file path and name: $localBackDir\$wgdrBkFile"
+PSLog ("Local site backup file size: {0:n3} GB" -f $localFSizeGB)
+PSLog "Remote file path and name: $targBackDir\$wgdrBkFile"
+PSLog ("Remote site backup file size: {0:n3} GB" -f $remoteFSize)
+
+
+## Get Disk Space
+NET USE Q: "\\s1cfafile01.appservices.state.sbu\CfAVizBackups" /persistent:no
+$displayDriveFree, $displaydriveTotal = GetDiskSpace
+$logString = ("Post backup drive stats: {0:n2} GB free of {1:n2} total GB on drive." -f $displayDriveFree, $displaydriveTotal) 
+PSLog ("Post backup drive stats: {0:n2} GB free of {1:n2} total GB on drive." -f $displayDriveFree, $displaydriveTotal)
+NET USE Q: /DELETE
+Add-Content -Path $resultFile $xfrString
+Add-Content -Path $resultFile "Stats: $logString"
+
+## If Network issues during backup, include diags.
+If (Test-Path $netTestFile)
+{
+    PSLog "netTestFile exists, add to log."
+    $ntTemp = Get-Content -Path $netTestFile
+    Add-Content -Path $resultFile -Value $ntTemp
+    Remove-Item -Path $netTestFile
+}
+
+$deets = Get-Content -Path $resultFile -Raw
+
+##
+## Send completion notice email and include details in the body of the message. Test for successful
+## command execution. If fail, $_ is last error in pipeline, may be useful to find out error.
+##
+$smtpBody = "GeoState Backup completed on $endTime. Details included.`n`n" + $deets
+try
+{
+    Send-MailMessage -From $smtpFrom -To $smtpTo -Subject $smtpSubject -Body $smtpBody -SmtpServer $smtpSvr
+    PSLog "Send MailMessage command executed"
+}
+catch
+{
+    PSLog "Error sending SMTP message $_"
+}
+
+##
+## Clean up temp files.
+## Rename results file to date format and move to log directory.
+##
+
+If ($RemoveLocalBackupFile)
+    {
+    Remove-Item -Path "$localBackDir\$wgdrBkFile"
+    }
+
+$backFileDate = Get-Date -Format "yyyy-MM-dd-HHmm"
+$egisBackFileName = "GeoStateBackup-$backFileDate.txt"
+Rename-Item -Path $resultFile -NewName $egisBackFileName
+$fromSrr = "F:\Support\Scripts\$egisBackFileName"
+$totrgt = "F:\Support\Scripts\Logs"
+Move-Item -Path $fromSrr -Destination $totrgt
+
+##
+## Capture WEBGIS DR statistics (which are overwriten daily) and append to our logs
+##
+$webGisDRLog = "F:\ArcGIS\Portal\tools\webgisdr\webgisdr.log"
+$finalLogFile = "$totrgt\$egisBackFileName"
+$supplementalDRLog = Get-Content -Path $webGisDRLog
+Add-Content -Path $finalLogFile -Value "-------------------------------------"
+Add-Content -Path $finalLogFile -Value $supplementalDRLog 
+PSLog "Ending GeoState Backup script"
+PSBar
+####

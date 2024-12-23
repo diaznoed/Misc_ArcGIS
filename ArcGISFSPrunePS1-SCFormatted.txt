@@ -1,0 +1,139 @@
+<# GeoState Backup File Prune from File Share Script 
+10 Jul 2024
+Ver 1.0 - Do a simple prune of files based on file age, currently 12 days ($limit var).
+Ver 1.1 - GetDiskSpace Function, formatting, $prodString
+Ver 1.2 - Displayed individual file sizes and total bytes to be deleted, set file age to 11 days.
+Ver 1.3 - Reduce number of days kept on FS $limit=10, changed frequency of scheduled task to three 
+times a week, test for percent free and warn in log is less than 15% and update smtp list
+Ver 1.35 - Changed mail recipient array into text file read data
+Ver 1.4 - Read SMTP and other items of configuration from XML file.
+Ver 1.45 - Added time zone string, this ver of PS (2012) does not support Get-TimeZone function.
+Ver 1.5 - Clean up, confirm deletion of files from backup target.
+Ver 1.55 - Added scriptVer variable
+Ver 2.0 - Moved to new Windows Server 2019 hosts
+Ver 2.10 - Added tile cache backup subdir, now need to exclude that subdir content from this 
+ prune and allow its own prune. (Get-ChildItem -Path $archive\*.webgissite)
+Ver 2.20 - Read list of files into an array (if only one file, num of bytes returned and that causes major issues).
+#>
+$scriptVer = "2.20"
+
+##
+## Read shared script configuration info from GeoStateBackConfig XML file
+##
+[xml]$ScriptConfig = Get-Content F:\Support\Scripts\GeoStateBackConfig.xml
+$smtpFrom = $ScriptConfig.ScriptConfig.SMTPServer.SMTPFrom
+$smtpSvr = $ScriptConfig.ScriptConfig.SMTPServer.RelayName
+$smtpTo = $ScriptConfig.ScriptConfig.Recipients.Recip
+$archive = $ScriptConfig.ScriptConfig.BackDirs.RemoteBackupDir
+$RemoteBackupShare = $ScriptConfig.ScriptConfig.BackDirs.RemoteBackupShare
+$resultFile = $ScriptConfig.ScriptConfig.LocalScriptFiles.localResultFile
+$logFileName = $ScriptConfig.ScriptConfig.LocalScriptFiles.locallogFileName
+$pruneDays = $ScriptConfig.ScriptConfig.LocalPruneCfg.pruneRetainDays
+$logFileName = $ScriptConfig.ScriptConfig.LocalPruneCfg.pruneLogFileName
+$outputfile = $ScriptConfig.ScriptConfig.LocalPruneCfg.pruneOutputFile
+$prodString = $ScriptConfig.ScriptConfig.LocalPruneCfg.pruneProdString
+
+$limit = (Get-Date).AddDays(-$pruneDays)
+
+## Can't use Get-PSDrive on a file share, have to map a drive. (Mapped drive used in disk space function.)
+NET USE Q: $RemoteBackupShare /persistent:no
+
+## Find Time Zone, use Time zone string in PSLog 
+$tzstr = (Get-TimeZone).id
+
+function PSLog($tString)
+## PowerShell Log file writing function, automatically adds current date/time/timezone to each line
+{
+    $logTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Write-Output "$logTime $tzstr - $tString" | out-file -Filepath $logFileName -append
+}
+
+function GetDiskSpace
+## Calculate disk space, free disk space, used disk space
+{
+    $drive = Get-PSDrive -Name Q
+    $driveused = (($drive).used / 1GB)
+    $drivefree = (($drive).free / 1GB)
+    $driveTotal = ($driveused + $drivefree)
+    Return $drivefree, $driveTotal
+}
+
+##
+## MAIN
+## Prune GeoState backup files on file share s1cfafile01.appservices.state.sbu (delete files older than X days [$limit])
+##
+
+PSLog "----------------------------------------------------------"
+PSLog "Beginning $prodString Backup Pruning from File Share script v$scriptVer ."
+$displayDriveFree, $displaydriveTotal = GetDiskSpace
+$logString = ("Pre-pruning drive stats: {0:n2} GB free of {1:n2} total GB on drive." -f $displayDriveFree, $displaydriveTotal) 
+PSLog $logString
+
+PSLog "Pruning $prodString backup files older than $limit from $archive."
+$tbFiles = @(Get-ChildItem -Path $archive\*.webgissite -Recurse -Force | Where-Object { !$_.PSIsContainer -and $_.CreationTime -lt $limit })
+$tbFileCount = $tbFiles.Length
+$totFSize = ($tbfiles | Measure-Object -Sum Length).sum
+$x = 0
+$tStr1 = "Preparing to delete -" 
+While ($x -lt $tbFileCount)
+{
+    $tStr2 = ($tbFiles.name[$x])
+    $tSize1 = "$archive\$tStr2"
+    $tSize2 = (((Get-Item $tSize1).length) / 1GB)
+    $tStr3 = ("$tStr1 $tStr2 - {0:n1} GB" -f $tSize2)
+    PSLog $tStr3
+    $x++
+}
+$dispTotFSize = ($totFSize / 1GB)
+$tStr4 = ("Total bytes to be removed: {0:n1} GB" -f $dispTotFSize)
+PSLog $tStr4
+
+##
+## Delete GeoState backup files
+##
+Get-ChildItem -Path $archive\*.webgissite -Recurse -Force | Where-Object { !$_.PSIsContainer -and $_.CreationTime -lt $limit } | Remove-Item -Force
+
+## Did they actually delete?
+$x = 0
+While ($x -lt $tbFileCount)
+{
+    $testFileName = $archive + "\" + ($tbFiles.name[$x])
+    $testDele = Test-Path -Path $testFileName
+    IF ($testDele)
+    {
+        # If files still exist after deletion procedure, notify
+        PSLog "Check file deletion of $testFileName"
+    }
+    $x++
+}
+
+$displayDriveFree, $displaydriveTotal = GetDiskSpace
+$logString = ("Post-pruning drive stats: {0:n2} GB free of {1:n2} total GB on drive." -f $displayDriveFree, $displaydriveTotal) 
+PSLog $logString
+PSLog "Ending $prodString Backup Pruning from File Share script."
+if ($displayDriveFree -le 145)
+{
+    PSLog "* * WARNING: Backup space less than 15% free after pruning. * *"
+}
+
+## 
+## Joao's code to read a file and send filtered output to a second file
+## 
+$logday = Get-Date -Format yyyy-MM-dd
+$reader = [io.file]::OpenText($logFileName)
+$writer = [io.file]::CreateText($outputfile)
+
+while($reader.EndOfStream -ne $true) 
+{
+    $line = $reader.Readline()
+    if ($line -like "$logday*") 
+    {
+        $writer.WriteLine($line);
+    }
+}
+
+$writer.Dispose(); 
+$msgBody = Get-Content -Path $outputfile -Raw
+Send-MailMessage -From $smtpFrom -Subject "$prodString Backup Pruning Task" -To $smtpTo -Body $msgBody -SmtpServer $smtpSvr
+Remove-Item -Path $outputfile
+NET USE Q: /DELETE

@@ -1,0 +1,146 @@
+﻿<# BackupGeoCache
+Script to backup tile cache directories on GeoState GIS Server
+vbeta1 - 1/21/2024 - proof of concept
+v1.0 - 2/13/24 - scheudled as task.
+v1.1 - 2/20/24 - tweaks including directory content, retain files number, version and cleanup.
+#>
+$ver = "BackupGeoCache - v1.1"
+
+##
+## Read script configuration data from XML file.
+##
+[xml]$ScriptConfig = Get-Content F:\Support\Scripts\BackupCache.xml
+$smtpFrom = $ScriptConfig.ScriptConfig.SMTPServer.SMTPFrom
+$smtpSvr = $ScriptConfig.ScriptConfig.SMTPServer.RelayName
+$smtpTo = $ScriptConfig.ScriptConfig.Recipients.Recip
+$targCacheLocation = $ScriptConfig.ScriptConfig.CacheInfo.CacheLocation
+$backupDir = $ScriptConfig.ScriptConfig.CacheInfo.BackupDir
+$backupFileRoot = $ScriptConfig.ScriptConfig.CacheInfo.FileRoot
+$RemoteBackDir = $ScriptConfig.ScriptConfig.CacheInfo.RemoteDir
+$CacheRetainFiles = $ScriptConfig.ScriptConfig.CacheInfo.CacheRetain
+
+$emailSubj = "GeoState Cache Backup Task"
+
+$tcTemp = "$backupDir\tcTemp.txt"
+
+## Create unique backup file name
+$backupFileDate = Get-Date -Format "yyyy-MM-dd"
+$backupFileName = "$backupFileRoot-$backupFileDate.zip"
+$backupFilePath = "$backupDir\$backupFileName"
+
+## Get Time zone information for PSLog function 
+$tzname = Get-Timezone
+$tzstr = $tzname.Id
+
+## Location ande name of PSLog log file
+$psLogDir = "F:\Support\Scripts\PSLog"
+$psLogName = "GeoStateCachePSLog.txt"
+$psLogFileName = "$psLogDir\$psLogName"
+
+
+## PowerShell Log file writing function, automatically adds current date/time/TZ to each line
+function PSLog($tString)
+    {
+    $logTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Write-Output "$logTime $tzstr - $tString" | out-file -Filepath $psLogFileName -append
+    }
+
+
+##
+## Main
+##
+$tctStart = (Get-Date)
+Set-Content -Path $tcTemp -Encoding Ascii -Value "GeoState Cache Backup Script Email text" -Force
+$startTimeLong = Get-Date
+Add-Content -Path $tcTemp -Value $startTimeLong
+PSLog "Starting backup of GeoState tile cache directories."
+
+Compress-Archive -Path $targCacheLocation -DestinationPath $backupFilePath
+
+if ((Test-Path $backupFilePath) -eq $True)
+    {
+    $str2 = "Backup file created: $backupFilePath"
+    PSLog $str2
+    Add-Content -Path $tcTemp -Value $str2
+    }
+
+##
+## Copy backup files to remote computer location for safe keeping
+##
+PSLog "Copying cache backup files to $backupFilePath"
+Copy-Item -Path $backupFilePath -Destination $RemoteBackDir
+$remoteCacheFileLen = (Get-Item "$RemoteBackDir\$backupFileName").length
+if ($remoteCacheFileLen -gt 1MB) {
+    $dispMFileLen = ($remoteCacheFileLen / 1MB)
+    $str3 = ("$RemoteBackDir\$backupFileName, {0:n1} MBytes, have been copied..." -f $dispMFileLen)
+    PSLog $str3
+    Add-Content -Path $tcTemp -Value $str3
+    }
+
+##
+## Prune zipped cache files and leave the X newest files only, X defined in XML input file.
+## Co-Pilot generated code.
+##
+
+# Get all zip files in the directory
+$zipFiles = Get-ChildItem -Path $RemoteBackDir -Filter "*.zip" | Sort-Object -Property LastWriteTime -Descending
+
+# Keep the X (XML configured) newest zip files
+$str6 = "Configured to keep $CacheRetainFiles files"
+PSLog $str6
+Add-Content -Path $tcTemp -Value $str6
+$zipFilesToKeep = $zipFiles | Select-Object -First $CacheRetainFiles
+
+# Prune the rest of the zip files
+$zipFilesToDelete = $zipFiles | Where-Object { $_ -notin $zipFilesToKeep }
+$str1 = "Pruning the following files from backup: $zipFilesToDelete"
+PSLog $str1
+Add-Content -Path $tcTemp -Value $str1
+
+# Delete the older zip files
+$zipFilesToDelete | ForEach-Object {
+    Write-Host "Deleting $($_.Name)..."
+    Remove-Item -Path $_.FullName -Force
+}
+
+$str4 = "Pruned all but the $CacheRetainFiles newest zip files."
+PSLog $str4
+Add-Content -Path $tcTemp -Value $str4
+
+$tctFinish = (Get-Date)
+$tctInterval = ($tctFinish - $tctStart)
+$tctSecs = $tctInterval.TotalSeconds
+$tctString = ("Script ran in {0:n1} sec" -f $tctSecs)
+PSLog $tctString
+Add-Content -Path $tcTemp -Value $tctString
+
+## Get directory list of target backup dir and include it in email.
+$tempDirList = "$backupDir\tempdirlist.txt"
+dir "\\s1cfafile11.appservices.state.sbu\CfaVizBackups\GeoState\Cache" >$tempDirList
+$dirContent = Get-Content $tempDirList -Raw
+Add-Content -Path $tcTemp -Value $dirContent
+
+
+$endTimeLong = Get-Date
+Add-Content -Path $tcTemp -Value $endTimeLong
+PSLog "Closing script, sending status email."
+
+$smtpBody = Get-Content -Path $tcTemp -Raw
+Send-MailMessage -From $smtpFrom -To $smtpTo -Subject $emailSubj -Body $smtpBody -SmtpServer $smtpSvr
+
+# Remove text file used for email content.
+Remove-Item -Path $tcTemp
+PSLog "Removing temp file $tcTemp"
+
+# Remove text file used for directory content
+Remove-Item -Path $tempDirList
+PSLog "Removing temp directory list $tempDirList"
+
+# Remove local local copy of cache backup if properly copied to remote location 
+If ("$RemoteBackDir\$backupFileName") {
+    Remove-Item -Path $backupFilePath
+    PSLog "Removing $RemoteBackDir\$backupFileName"
+    }
+
+PSLog "End Script $ver"
+PSLog "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
