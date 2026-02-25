@@ -1,0 +1,32 @@
+*** PortalInventory.py
+	Change PortalInventory_py.txt to PortalInventory.py
+	
+	Creates an inventory of all non-system user portal content, including attributes
+	Outputs CSV
+
+*** PortalInventory_HFS_Delete_Candidates.py
+	Change PortalInventory_HFS_Delete_Candidates_py.txt to PortalInventory_HFS_Delete_Candidates.py
+
+	Creates an inventory of hosted feature services that are good candidates for deletion 
+	Outputs CSV
+
+BOTH FILES (These files are variaions fo the same script.)
+
+Dependencies
+	Requires Python 3.x
+	Requires arcgis and pandas libs
+	Recommend running where ArcGIS Pro is installed
+
+Update file before running:
+	Internal portal URL
+	PSA user name and password
+	CSV file path and name
+
+	Convert date in Excel using =DATE(1970,1,1+I2/86400000)
+
+Execute
+	Open in Idle on machine where Pro is installed
+	Run from command line where Pro is installed 
+	Install ArcGIS Python API
+	>python.exe <path to script>\PortalInventory.py or PortalInventory_HFS_Delete_Candidates.py
+

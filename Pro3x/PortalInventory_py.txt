@@ -1,0 +1,52 @@
+import pandas as pd
+#from IPython.display import display
+
+import arcgis
+from arcgis.gis import GIS
+
+# FROM: https://developers.arcgis.com/python/samples/inventory-organizational-content/
+# Requires Python 3.x with pandas.
+
+#Portal URL - *****EDIT*****
+url = 'https://<portal fully qualified hostname>:7443/arcgis'
+
+#Built in PSA - *****EDIT*****
+username = '<portal admin user>'
+password = '<portal admin password>'
+
+#Max users returned by Portal user searvh (set higher than portal user count)
+max_users = 5000
+
+#Portal object
+gis = GIS(url,username,password)
+
+#Get users
+org_users = gis.users.search(max_users=max_users, exclude_system=True)
+print(f"{len(org_users)} users found")
+
+#Get content
+org_content = []
+for user in org_users:
+    qe = f"owner: {user.username}"
+    user_content = gis.content.advanced_search(query=qe, max_items=-1)['results']
+    org_content += user_content
+
+content_df = pd.DataFrame(org_content)
+
+#Item count by type
+print(content_df.type.value_counts().head(10))
+
+#Filter columns
+view_columns = ['id', 'title', 'owner', 'ownerFolder', 'type', 'access', 'created', 'modified', 'numViews', 'numRatings', 'avgRating', 'numComments', 'groupDesignations', 'url', 'typeKeywords']
+
+#Output CSV - *****EDIT*****
+target_path = "c:\\temp\\org_content_all.csv"
+
+content_df.to_csv(target_path)
+
+# CONSIDERATIONS FOR REVIEWING THE RESULTING CSV FILE IN EXCEL
+#     Convert date in Excel using =DATE(1970,1,1+I2/86400000)
+
+    
+
+

@@ -1,0 +1,13 @@
+This Jupyter Notebook appears to be a script for generating mock CSV files, cleaning them up, and publishing them to an ArcGIS Portal. Here's a breakdown of what each cell does:
+
+Imports necessary Python modules.
+Opens the 'merge.csv' file.
+Defines the number of records desired in each file and extracts data from 'merge.csv' into lists.
+Changes the directory where the files will be created (assuming it's commented out).
+Creates mock CSV files with randomized data based on the extracted data.
+Cleans up the CSV files by removing any rows with missing values.
+Establishes a connection to an ArcGIS Portal.
+Publishes the CSV files to the ArcGIS Portal as hosted feature layers.
+Each CSV file is published with a title, description, and tags, and the publishing process is printed to the console.
+
+The script seems to be designed to generate and publish multiple mock CSV files, each containing randomized data, to an ArcGIS Portal. It's quite comprehensive and handles tasks from data generation to publication seamlessly. 
